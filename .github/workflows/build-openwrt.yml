@@ -56,9 +56,12 @@ jobs:
 
       - name: Build packages
         working-directory: openwrt
-        # Build serially: OpenWrt host tools (libdeflate-gzip) can race when
-        # multiple package goals are started on a clean runner.
-        run: make package/yggdrasil/compile package/luci-proto-yggdrasil/compile V=s -j1
+        # Install host tools explicitly first. A clean tree otherwise may try
+        # to unpack Lua before libdeflate-gzip has been staged.
+        run: |
+          make tools/install -j1 V=s
+          make package/yggdrasil/compile V=s -j1
+          make package/luci-proto-yggdrasil/compile V=s -j1
 
       - name: Collect packages
         run: |
