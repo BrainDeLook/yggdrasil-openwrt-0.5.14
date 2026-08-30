@@ -60,6 +60,8 @@ jobs:
           cp -a ../net/yggdrasil/. feeds/packages/net/yggdrasil/
           cp -a ../protocols/luci-proto-yggdrasil/. feeds/luci/protocols/luci-proto-yggdrasil/
           ./scripts/feeds install yggdrasil luci-proto-yggdrasil
+          test -f package/feeds/packages/yggdrasil/Makefile
+          test -f package/feeds/luci/luci-proto-yggdrasil/Makefile
           printf '%s\n' \
             'CONFIG_PACKAGE_yggdrasil=m' \
             'CONFIG_PACKAGE_luci-proto-yggdrasil=m' >> .config
@@ -73,8 +75,9 @@ jobs:
           # The SDK already ships its host toolchain. Do not call full-tree
           # host package goals here: SDKs intentionally omit those source
           # packages (for example package/utils/lua).
-          make package/yggdrasil/compile V=s -j1
-          make package/luci-proto-yggdrasil/compile V=s -j1
+          # feeds install exposes packages through package/feeds/<feed>/...
+          make package/feeds/packages/yggdrasil/compile V=s -j1
+          make package/feeds/luci/luci-proto-yggdrasil/compile V=s -j1
 
       - name: Collect and verify packages
         run: |
