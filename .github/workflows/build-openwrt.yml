@@ -70,6 +70,12 @@ jobs:
         working-directory: openwrt-sdk
         run: |
           set -euxo pipefail
+          # Snapshot SDKs currently transition from ipkg to apk and may not
+          # have the host Lua/apk helpers staged until their goals are called
+          # explicitly (OpenWrt issue #21082).
+          make package/utils/lua/host/compile V=s -j1
+          make package/system/apk/host/compile V=s -j1
+          test -x staging_dir/host/bin/libdeflate-gzip
           make package/yggdrasil/compile V=s -j1
           make package/luci-proto-yggdrasil/compile V=s -j1
 
