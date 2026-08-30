@@ -31,5 +31,6 @@ Select `Network → Routing and Redirection → yggdrasil` and
 The source archive hash is pinned in the package Makefile. Yggdrasil 0.5.14
 requires Go 1.25 or newer in the OpenWrt toolchain.
 
-The CI matrix targets `rockchip/armv8` and `armvirt/64` (the latter produces
-the `aarch64_generic` package architecture).
+The CI matrix uses the official snapshot SDKs for `rockchip/armv8` and
+`armsr/armv8`. The latter is OpenWrt's generic 64-bit ARM target and produces
+the `aarch64_generic` package architecture. Current snapshots use `.apk`.

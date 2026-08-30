@@ -10,67 +10,85 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.target }}
+    name: ${{ matrix.name }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: rockchip-armv8
-            target_name: rockchip
+          # armsr/armv8 is OpenWrt's generic 64-bit ARM target and produces
+          # packages with the aarch64_generic architecture.
+          - name: aarch64_generic
+            target: armsr
             subtarget: armv8
-          - target: aarch64_generic
-            target_name: armvirt
-            subtarget: 64
+          - name: rockchip-armv8
+            target: rockchip
+            subtarget: armv8
 
     steps:
       - name: Checkout package feed
         uses: actions/checkout@v4
 
-      - name: Install OpenWrt build dependencies
+      - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang flex bison gawk gettext \
-            libncurses-dev libssl-dev python3-setuptools python3-pyelftools rsync unzip zlib1g-dev \
-            file wget git xz-utils
+            libncurses-dev libssl-dev python3-setuptools python3-pyelftools \
+            rsync unzip zlib1g-dev file wget git xz-utils zstd curl
 
-      - name: Checkout OpenWrt
-        run: git clone --depth=1 https://github.com/openwrt/openwrt.git openwrt
-
-      - name: Configure feeds and target
-        working-directory: openwrt
+      - name: Download official OpenWrt snapshot SDK
+        env:
+          SDK_BASE: https://downloads.openwrt.org/snapshots/targets/${{ matrix.target }}/${{ matrix.subtarget }}/
         run: |
+          set -euxo pipefail
+          sdk_file="$(curl -fsSL "$SDK_BASE" | sed -n 's/.*href="\([^"]*openwrt-sdk[^"]*\.tar\.zst\)".*/\1/p' | head -n1)"
+          test -n "$sdk_file"
+          curl -fL --retry 3 -o openwrt-sdk.tar.zst "${SDK_BASE}${sdk_file}"
+          tar --zstd -xf openwrt-sdk.tar.zst
+          mv openwrt-sdk-* openwrt-sdk
+
+      - name: Configure feeds and custom packages
+        working-directory: openwrt-sdk
+        run: |
+          set -euxo pipefail
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          mkdir -p package/yggdrasil-local net-local
-          cp -a ../net/yggdrasil package/yggdrasil-local/
-          mkdir -p feeds/luci/protocols/luci-proto-yggdrasil
+          # Keep the package in its normal feed location: both Makefiles use
+          # relative includes (golang-package.mk and luci.mk).
+          rm -rf feeds/packages/net/yggdrasil
+          rm -rf feeds/luci/protocols/luci-proto-yggdrasil
+          mkdir -p feeds/packages/net/yggdrasil feeds/luci/protocols/luci-proto-yggdrasil
+          cp -a ../net/yggdrasil/. feeds/packages/net/yggdrasil/
           cp -a ../protocols/luci-proto-yggdrasil/. feeds/luci/protocols/luci-proto-yggdrasil/
-          cat > .config <<EOF
-          CONFIG_TARGET_${{ matrix.target_name }}=y
-          CONFIG_TARGET_${{ matrix.target_name }}_${{ matrix.subtarget }}=y
-          CONFIG_PACKAGE_yggdrasil=m
-          CONFIG_PACKAGE_luci-proto-yggdrasil=m
-          EOF
+          ./scripts/feeds install yggdrasil luci-proto-yggdrasil
+          printf '%s\n' \
+            'CONFIG_PACKAGE_yggdrasil=m' \
+            'CONFIG_PACKAGE_luci-proto-yggdrasil=m' >> .config
           make defconfig
+          grep -E '^CONFIG_(TARGET|PACKAGE_(yggdrasil|luci-proto-yggdrasil))' .config
 
-      - name: Build packages
-        working-directory: openwrt
-        # Install host tools explicitly first. A clean tree otherwise may try
-        # to unpack Lua before libdeflate-gzip has been staged.
+      - name: Build Yggdrasil and LuCI packages
+        working-directory: openwrt-sdk
         run: |
-          make tools/install -j1 V=s
+          set -euxo pipefail
           make package/yggdrasil/compile V=s -j1
           make package/luci-proto-yggdrasil/compile V=s -j1
 
-      - name: Collect packages
+      - name: Collect and verify packages
         run: |
-          mkdir -p artifacts/${{ matrix.target }}
-          find openwrt/bin/packages -type f \( -name 'yggdrasil_*.ipk' -o -name 'luci-proto-yggdrasil_*.ipk' \) -exec cp {} artifacts/${{ matrix.target }}/ \;
-          test -n "$(find artifacts/${{ matrix.target }} -type f -name '*.ipk' -print -quit)"
+          set -euxo pipefail
+          mkdir -p artifacts/${{ matrix.name }}
+          find openwrt-sdk/bin/packages -type f \
+            \( -name 'yggdrasil_*.apk' -o -name 'yggdrasil_*.ipk' \
+               -o -name 'luci-proto-yggdrasil_*.apk' -o -name 'luci-proto-yggdrasil_*.ipk' \) \
+            -exec cp -v {} artifacts/${{ matrix.name }}/ \;
+          find artifacts/${{ matrix.name }} -maxdepth 1 -type f -print
+          test "$(find artifacts/${{ matrix.name }} -type f \( -name '*.apk' -o -name '*.ipk' \) | wc -l)" -ge 2
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
         with:
-          name: yggdrasil-0.5.14-${{ matrix.target }}
-          path: artifacts/${{ matrix.target }}/*.ipk
+          name: yggdrasil-0.5.14-${{ matrix.name }}
+          path: |
+            artifacts/${{ matrix.name }}/*.apk
+            artifacts/${{ matrix.name }}/*.ipk
+          if-no-files-found: error
